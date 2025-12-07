@@ -1,1 +1,741 @@
-test
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geminiチャットルーム</title>
+    <!-- Tailwind CSS CDNを読み込み -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Interフォントを適用 -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        /* スクロールバーのスタイルをカスタマイズ（任意） */
+        #messages-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        #messages-container::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 4px;
+        }
+    </style>
+    <!-- Firebase SDKのインポートマップ -->
+    <script type="importmap">
+    {
+      "imports": {
+        "firebase/app": "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js"
+      }
+    }
+    </script>
+</head>
+<body class="min-h-screen flex flex-col antialiased">
+
+    <!-- メインアプリケーションコンテナ -->
+    <div id="app" class="flex-grow flex flex-col items-center justify-start p-4 md:p-8">
+        
+        <!-- パスワード入力画面 (初期表示) -->
+        <div id="password-screen" class="w-full max-w-md bg-white p-6 rounded-xl shadow-2xl transition-all duration-300">
+            <h1 class="text-2xl font-bold mb-4 text-center text-gray-800">チャットルームにアクセス</h1>
+            <p class="mb-4 text-sm text-gray-600 text-center">共有の「ルームパスワード」を入力してください。</p>
+            <input type="password" id="room-password" placeholder="ルームパスワード" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 mb-4">
+            <button id="access-button" class="w-full bg-blue-600 text-white p-3 rounded-lg font-semibold hover:bg-blue-700 transition duration-150 shadow-lg" disabled>
+                アクセス開始
+            </button>
+            <p id="password-error" class="text-red-500 text-sm mt-3 text-center hidden">パスワードが正しくありません。</p>
+        </div>
+
+        <!-- チャット画面 (パスワード入力後表示) -->
+        <div id="chat-screen" class="w-full max-w-4xl h-full flex flex-col hidden transition-all duration-300">
+            <header class="bg-white p-4 rounded-xl shadow-lg mb-4 flex justify-between items-center sticky top-0 z-10">
+                <div class="flex flex-col">
+                    <h2 class="text-xl font-bold text-gray-800">チャットルーム: <span id="current-room-id" class="text-blue-600"></span></h2>
+                    <p class="text-xs text-gray-500">ユーザーID: <span id="current-user-id" class="font-mono"></span></p>
+                </div>
+                <div class="flex space-x-2">
+                    <button id="reset-button" class="p-2 bg-red-500 text-white rounded-full hover:bg-red-600 transition duration-150 shadow-md" title="チャット履歴をリセット">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm4 0a1 1 0 10-2 0v6a1 1 0 102 0V8z" clip-rule="evenodd" />
+                        </svg>
+                    </button>
+                    <button id="export-button" class="p-2 bg-green-500 text-white rounded-full hover:bg-green-600 transition duration-150 shadow-md" title="履歴をエクスポート">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M7 3a1 1 0 000 2h6a1 1 0 100-2H7zM4 5a2 2 0 012-2h8a2 2 0 012 2v10a2 2 0 01-2 2H6a2 2 0 01-2-2V5zm10 4a1 1 0 011 1v5a1 1 0 11-2 0v-5a1 1 0 011-1zM7 10a1 1 0 00-1 1v5a1 1 0 102 0v-5a1 1 0 00-1-1z" />
+                        </svg>
+                    </button>
+                </div>
+            </header>
+
+            <!-- メッセージ表示領域 -->
+            <div id="messages-container" class="flex-grow bg-white p-4 overflow-y-auto rounded-xl shadow-inner mb-4 max-h-[70vh] min-h-[300px]">
+                <div id="messages-list" class="space-y-4">
+                    <!-- メッセージはここに動的に追加されます -->
+                </div>
+            </div>
+
+            <!-- 入力フォーム -->
+            <footer class="bg-white p-4 rounded-xl shadow-lg sticky bottom-0 z-10">
+                <div class="flex flex-col space-y-3">
+                    <!-- 発言者選択 -->
+                    <div class="flex items-center space-x-4">
+                        <label class="text-sm font-medium text-gray-700">発言者:</label>
+                        <div class="flex space-x-4">
+                            <label class="inline-flex items-center cursor-pointer">
+                                <input type="radio" name="speaker" value="User A" checked class="form-radio text-blue-600 h-4 w-4">
+                                <span class="ml-2 text-gray-700">User A</span>
+                            </label>
+                            <label class="inline-flex items-center cursor-pointer">
+                                <input type="radio" name="speaker" value="User B" class="form-radio text-purple-600 h-4 w-4">
+                                <span class="ml-2 text-gray-700">User B</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="flex space-x-3">
+                        <textarea id="message-input" placeholder="メッセージを入力..." class="flex-grow p-3 border border-gray-300 rounded-lg resize-none focus:ring-blue-500 focus:border-blue-500 max-h-40" rows="1"></textarea>
+                        <button id="send-button" class="flex-shrink-0 bg-blue-600 text-white p-3 rounded-xl font-semibold hover:bg-blue-700 transition duration-150 shadow-lg flex items-center justify-center disabled:bg-gray-400" disabled>
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 00.19 1.485A1 1 0 004 18h12a1 1 0 00.598-.163l.19-.115a1 1 0 00.19-1.485l-7-14z" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </footer>
+        </div>
+
+        <!-- モーダル（リセット確認など） -->
+        <div id="modal-container" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center z-50 hidden">
+            <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
+                <h3 id="modal-title" class="text-lg font-bold mb-4 text-gray-800"></h3>
+                <p id="modal-body" class="mb-6 text-gray-700"></p>
+                <div class="flex justify-end space-x-3">
+                    <button id="modal-cancel" class="px-4 py-2 bg-gray-300 text-gray-800 rounded-lg hover:bg-gray-400 transition">キャンセル</button>
+                    <button id="modal-confirm" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition"></button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ローディングインジケーター -->
+        <div id="loading-indicator" class="fixed bottom-10 right-10 p-3 bg-blue-500 text-white rounded-full shadow-lg flex items-center space-x-2 hidden">
+            <svg class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>処理中...</span>
+        </div>
+
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "firebase/app";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "firebase/auth";
+        // getDocを追加
+        import { getFirestore, doc, getDoc, addDoc, setDoc, deleteDoc, onSnapshot, collection, query, orderBy, serverTimestamp, getDocs, setLogLevel } from "firebase/firestore";
+
+        // =========================================================================================
+        // 1. 環境設定と初期化
+        // =========================================================================================
+
+        // **重要**: `__app_id`, `__firebase_config`, `__initial_auth_token`はCanvas環境から提供されます。
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        
+        // --- ▼ Firebase Config 貼り付け場所 ▼ ---
+        // 環境変数 (__firebase_config) が利用できない場合、ここにFirebaseコンソールから取得した設定オブジェクトを直接貼り付けてください。
+        // 例: const firebaseConfig = { apiKey: "...", authDomain: "...", projectId: "...", ... };
+const firebaseConfig = {
+  apiKey: "AIzaSyChJDc8YkeESWUzX5cr9KlERHNQnEtTbl8",
+  authDomain: "tabi-f182f.firebaseapp.com",
+  projectId: "tabi-f182f",
+  storageBucket: "tabi-f182f.firebasestorage.app",
+  messagingSenderId: "243734940806",
+  appId: "1:243734940806:web:cab1d02bee5c36d74c1507"
+};        // --- ▲ Firebase Config 貼り付け場所 ▲ ---
+
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // **重要**: ここにあなたのGemini APIキーを直接記述します。
+        // ※セキュリティ上の懸念があるため、本番環境ではCloud Functionsを利用してください。
+        const apiKey = ""; // <--- あなたのAPIキーをここに設定してください
+
+        let app, db, auth, userId = null;
+        let currentRoomId = null;
+        let unsubscribe = null; // onSnapshotのリスナーを保持
+        let isAuthReady = false; // 認証準備完了フラグ
+
+        // 8. 最初にGemini APIに与えるプロンプト
+        const systemInstruction = `あなたは、2人のユーザーの会話に自然に溶け込むことができる、親しみやすく知識豊富なAIアシスタント「Gemini」です。ユーザーの発言者（User AまたはUser B）とGemini自身の発言を区別して応答してください。
+- 応答は親切で、会話の流れを尊重してください。
+- 専門的な質問には正確に答え、カジュアルな会話にも参加してください。
+- 応答の長さは簡潔に保ってください。
+- ユーザーの発言者情報（User AやUser B）は、応答に含めないでください。`;
+
+
+        // DOM要素の参照
+        const elements = {
+            passwordScreen: document.getElementById('password-screen'),
+            chatScreen: document.getElementById('chat-screen'),
+            roomPasswordInput: document.getElementById('room-password'),
+            accessButton: document.getElementById('access-button'),
+            passwordError: document.getElementById('password-error'),
+            messagesContainer: document.getElementById('messages-container'),
+            messagesList: document.getElementById('messages-list'),
+            messageInput: document.getElementById('message-input'),
+            sendButton: document.getElementById('send-button'),
+            resetButton: document.getElementById('reset-button'),
+            exportButton: document.getElementById('export-button'),
+            loadingIndicator: document.getElementById('loading-indicator'),
+            currentRoomIdDisplay: document.getElementById('current-room-id'),
+            currentUserIdDisplay: document.getElementById('current-user-id'),
+            modalContainer: document.getElementById('modal-container'),
+            modalTitle: document.getElementById('modal-title'),
+            modalBody: document.getElementById('modal-body'),
+            modalConfirm: document.getElementById('modal-confirm'),
+            modalCancel: document.getElementById('modal-cancel'),
+        };
+
+        // =========================================================================================
+        // 2. Firebase 初期化と認証
+        // =========================================================================================
+
+        /**
+         * Firebaseの初期化と認証を行う
+         */
+        async function initializeFirebase() {
+            if (!firebaseConfig) {
+                console.error("Firebase config is missing.");
+                return;
+            }
+
+            try {
+                setLogLevel('Debug'); // デバッグログを有効化
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                await setPersistence(auth, browserSessionPersistence);
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                } else {
+                    // Canvas環境外での動作や、トークンがない場合のフォールバック
+                    await signInAnonymously(auth);
+                }
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        elements.currentUserIdDisplay.textContent = userId;
+                        console.log("Firebase Auth successful. User ID:", userId);
+                    } else {
+                        console.log("Firebase Auth state changed: No user.");
+                        userId = null;
+                    }
+                    isAuthReady = true; // 認証完了
+                    // 認証が完了したら、アクセスボタンを有効化
+                    elements.accessButton.disabled = false;
+                });
+
+            } catch (error) {
+                console.error("Firebase initialization or authentication failed:", error);
+                // エラー時もアクセスボタンを有効化し、ユーザーに手動での再試行を促す
+                elements.accessButton.disabled = false;
+            }
+        }
+
+        // =========================================================================================
+        // 3. ルーム管理とFirestore操作
+        // =========================================================================================
+
+        /**
+         * Firestoreのメッセージコレクションリファレンスを取得
+         * @param {string} roomId - ルームID（パスワード）
+         * @returns {import("firebase/firestore").CollectionReference}
+         */
+        const getMessagesCollectionRef = (roomId) => {
+            // 2ユーザー間でデータを共有するため、public/dataのパスを使用
+            return collection(db, `artifacts/${appId}/public/data/chat_rooms/${roomId}/messages`);
+        };
+
+        /**
+         * 有効なルームIDリストをチェックする（クライアント側の確認用）
+         * ※セキュリティルールが最終的なアクセス制御を行うため、これはUX向上目的です。
+         * @param {string} roomId - チェックするルームID
+         * @returns {Promise<boolean>} 有効であればtrue
+         */
+        async function checkValidRoomId(roomId) {
+            if (!db) return false;
+            try {
+                // セキュリティルールで読み取りは禁止されていますが、存在チェックのために
+                // ルールが false の場合はアクセスエラーになります。
+                // そのため、ここでは純粋にクライアント側のロジックとしてパスワード長などで制限するのが一般的ですが、
+                // ルールテストのために、今回はダミーのチェックとしておきます。
+                // 実際には、getDocを試行し、Firestoreのエラー（PERMISSION_DENIED）で判定しますが、
+                // 今回はシンプルにパスワード長チェックのみに依存します。
+                if (roomId.length < 4) return false;
+                
+                // 【重要】セキュリティルールを適用しているため、
+                // クライアントからの valid_room_passwords へのアクセスは、
+                // 権限がないため必ず失敗します。
+                // そのため、クライアント側では getDoc での確認はできません。
+                
+                // ここでは、入力があったことを示すため、常にtrueを返します。
+                // 最終的なアクセス制御は、Firebaseセキュリティルールに依存します。
+                return true; 
+            } catch (error) {
+                console.error("Room ID check failed:", error);
+                return false;
+            }
+        }
+
+
+        /**
+         * メッセージリストをリアルタイムで購読
+         * @param {string} roomId - ルームID
+         */
+        function subscribeToMessages(roomId) {
+            if (unsubscribe) {
+                unsubscribe(); // 既存のリスナーを解除
+            }
+
+            const messagesRef = getMessagesCollectionRef(roomId);
+            const q = query(messagesRef, orderBy('timestamp', 'asc'));
+
+            // onSnapshotを適用 - セキュリティルール違反の場合はここでエラーが発生
+            unsubscribe = onSnapshot(q, (snapshot) => {
+                elements.passwordError.classList.add('hidden'); // アクセス成功時はエラーを隠す
+                elements.messagesList.innerHTML = '';
+                snapshot.forEach((doc) => {
+                    const message = doc.data();
+                    displayMessage(message);
+                });
+                // 最新メッセージが表示されるようにスクロール
+                if (elements.messagesContainer) {
+                    elements.messagesContainer.scrollTop = elements.messagesContainer.scrollHeight;
+                }
+            }, (error) => {
+                console.error("Error listening to messages:", error);
+                // セキュリティルール違反の場合（パスワードが無効な場合）
+                if (error.code === 'permission-denied') {
+                    handlePermissionDenied();
+                } else {
+                    showNotification("メッセージの読み込み中に予期せぬエラーが発生しました。", "error");
+                }
+            });
+        }
+
+        /**
+         * セキュリティルール違反時の処理（無効なパスワードを入力した場合など）
+         */
+        function handlePermissionDenied() {
+            if (currentRoomId) {
+                // ルームIDをリセットし、パスワード画面に戻す
+                currentRoomId = null;
+                if (unsubscribe) {
+                    unsubscribe();
+                    unsubscribe = null;
+                }
+                elements.chatScreen.classList.add('hidden');
+                elements.passwordScreen.classList.remove('hidden');
+                elements.passwordError.textContent = "このパスワードではルームにアクセスできませんでした。パスワードを確認してください。";
+                elements.passwordError.classList.remove('hidden');
+            }
+        }
+
+
+        /**
+         * メッセージをFirestoreに保存
+         * @param {string} speaker - 発言者名
+         * @param {string} text - メッセージ本文
+         * @param {boolean} isAI - Geminiからの応答かどうか
+         */
+        async function saveMessage(speaker, text, isAI = false) {
+            if (!currentRoomId || !db) return;
+
+            const messagesRef = getMessagesCollectionRef(currentRoomId);
+
+            try {
+                await addDoc(messagesRef, {
+                    speaker: speaker,
+                    text: text,
+                    timestamp: serverTimestamp(),
+                    isAI: isAI
+                });
+                console.log("Message saved successfully.");
+            } catch (e) {
+                console.error("Error adding document: ", e);
+                // セキュリティルール違反による書き込みエラーの場合
+                if (e.code === 'permission-denied') {
+                    handlePermissionDenied();
+                }
+                showNotification("メッセージの保存中にエラーが発生しました。", "error");
+            }
+        }
+
+        /**
+         * チャット履歴を全て削除
+         */
+        async function resetChatHistory() {
+            if (!currentRoomId || !db) return;
+            showLoading(true, "履歴をリセット中...");
+            try {
+                // リスナーを一時的に解除
+                if (unsubscribe) unsubscribe();
+
+                const messagesRef = getMessagesCollectionRef(currentRoomId);
+                const snapshot = await getDocs(messagesRef);
+
+                const deletePromises = [];
+                snapshot.forEach((doc) => {
+                    deletePromises.push(deleteDoc(doc.ref));
+                });
+                await Promise.all(deletePromises);
+
+                showLoading(false);
+                subscribeToMessages(currentRoomId); // リスナーを再開
+                showNotification("チャット履歴がリセットされました。", "success");
+            } catch (error) {
+                showLoading(false);
+                console.error("Error resetting chat history:", error);
+                // セキュリティルール違反による書き込みエラーの場合
+                if (error.code === 'permission-denied') {
+                    handlePermissionDenied();
+                }
+                showNotification("履歴のリセット中にエラーが発生しました。", "error");
+            }
+        }
+
+
+        // =========================================================================================
+        // 4. Gemini API 連携
+        // =========================================================================================
+
+        /**
+         * Gemini APIを呼び出し、応答を返す
+         * @param {string} userMessage - ユーザーが入力したメッセージ
+         * @param {string} speaker - 発言者名
+         * @returns {Promise<string>} Geminiの応答テキスト
+         */
+        async function getGeminiResponse(userMessage, speaker) {
+            if (!apiKey) {
+                return "エラー: APIキーが設定されていません。コード内のapiKey変数を設定してください。";
+            }
+
+            // 現在のチャット履歴を取得して、会話のコンテキストを作成
+            const chatContext = Array.from(elements.messagesList.children)
+                .map(el => {
+                    const msgSpeaker = el.dataset.speaker;
+                    const msgText = el.querySelector('p').textContent;
+                    // User A/Bの発言を 'user'、AIの発言を 'model' のロールにマップ
+                    const role = msgSpeaker.startsWith('User') ? 'user' : 'model';
+                    const text = msgSpeaker.startsWith('User') ? `${msgSpeaker}: ${msgText}` : msgText;
+                    return { role, parts: [{ text }] };
+                });
+            
+            // 最新のユーザーメッセージを追加
+            chatContext.push({
+                role: "user",
+                parts: [{ text: `${speaker}: ${userMessage}` }]
+            });
+
+
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+            const payload = {
+                contents: chatContext,
+                systemInstruction: {
+                    parts: [{ text: systemInstruction }]
+                },
+            };
+
+            const maxRetries = 3;
+            for (let attempt = 0; attempt < maxRetries; attempt++) {
+                try {
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        const errorBody = await response.text();
+                        throw new Error(`API Error: ${response.status} ${response.statusText}. Body: ${errorBody}`);
+                    }
+
+                    const result = await response.json();
+                    const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                    if (text) {
+                        return text.trim();
+                    } else {
+                        // 応答が空または予期しない構造の場合
+                        throw new Error("API response was empty or malformed.");
+                    }
+                } catch (error) {
+                    console.error(`Attempt ${attempt + 1} failed:`, error);
+                    if (attempt < maxRetries - 1) {
+                        // 指数関数的バックオフ
+                        const delay = Math.pow(2, attempt) * 1000;
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        return `Gemini API呼び出し中にエラーが発生しました: ${error.message}`;
+                    }
+                }
+            }
+        }
+
+
+        // =========================================================================================
+        // 5. UI/UX ヘルパー関数
+        // =========================================================================================
+
+        /**
+         * メッセージをUIに表示
+         * @param {object} message - Firestoreから取得したメッセージオブジェクト
+         */
+        function displayMessage(message) {
+            const isAI = message.isAI;
+            const speaker = message.speaker;
+            const text = message.text || "";
+            const timestamp = message.timestamp ? new Date(message.timestamp.seconds * 1000).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' }) : '';
+
+            const containerClasses = isAI 
+                ? 'flex justify-start' 
+                : (speaker === 'User A' ? 'flex justify-start' : 'flex justify-end');
+
+            const messageClasses = isAI
+                ? 'bg-indigo-100 text-gray-800 rounded-bl-none'
+                : (speaker === 'User A' ? 'bg-blue-100 text-gray-800 rounded-tl-none' : 'bg-purple-600 text-white rounded-tr-none');
+
+            const speakerColor = isAI ? 'text-indigo-600' : (speaker === 'User A' ? 'text-blue-600' : 'text-purple-600');
+            const speakerName = isAI ? 'Gemini' : speaker;
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `${containerClasses} mb-3`;
+            messageDiv.dataset.speaker = speakerName; // エクスポート用
+
+            messageDiv.innerHTML = `
+                <div class="max-w-xs md:max-w-md lg:max-w-lg">
+                    <div class="text-xs font-semibold mb-1 ${speakerColor}">${speakerName}</div>
+                    <div class="p-3 rounded-xl shadow-md ${messageClasses} break-words">
+                        <p class="whitespace-pre-wrap">${text}</p>
+                    </div>
+                    <div class="text-xs text-gray-400 mt-1 ${isAI || speaker === 'User A' ? 'text-left' : 'text-right'}">${timestamp}</div>
+                </div>
+            `;
+            elements.messagesList.appendChild(messageDiv);
+        }
+
+        /**
+         * ローディングインジケーターの表示/非表示
+         * @param {boolean} show - trueで表示、falseで非表示
+         * @param {string} text - 表示するテキスト
+         */
+        function showLoading(show, text = "処理中...") {
+            if (show) {
+                elements.loadingIndicator.classList.remove('hidden');
+                elements.loadingIndicator.querySelector('span').textContent = text;
+                elements.sendButton.disabled = true;
+                elements.messageInput.disabled = true;
+            } else {
+                elements.loadingIndicator.classList.add('hidden');
+                // メッセージ入力フィールドの有効化は、入力値が空でないかどうかに依存させる
+                elements.sendButton.disabled = elements.messageInput.value.trim() === '';
+                elements.messageInput.disabled = false;
+            }
+        }
+        
+        /**
+         * カスタムモーダルを表示
+         * @param {string} title - モーダルのタイトル
+         * @param {string} body - モーダルの本文
+         * @param {string} confirmText - 確認ボタンのテキスト
+         * @returns {Promise<boolean>} ユーザーが確認を押したかどうか
+         */
+        function showModal(title, body, confirmText) {
+            return new Promise(resolve => {
+                elements.modalTitle.textContent = title;
+                elements.modalBody.textContent = body;
+                elements.modalConfirm.textContent = confirmText;
+                elements.modalConfirm.className = 'px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition';
+                
+                elements.modalContainer.classList.remove('hidden');
+
+                const handleConfirm = () => {
+                    elements.modalContainer.classList.add('hidden');
+                    elements.modalConfirm.removeEventListener('click', handleConfirm);
+                    elements.modalCancel.removeEventListener('click', handleCancel);
+                    resolve(true);
+                };
+
+                const handleCancel = () => {
+                    elements.modalContainer.classList.add('hidden');
+                    elements.modalConfirm.removeEventListener('click', handleConfirm);
+                    elements.modalCancel.removeEventListener('click', handleCancel);
+                    resolve(false);
+                };
+
+                elements.modalConfirm.addEventListener('click', handleConfirm);
+                elements.modalCancel.addEventListener('click', handleCancel);
+            });
+        }
+
+        /**
+         * 通知メッセージを表示（ここでは簡単なconsole.logに留める）
+         * @param {string} message 
+         * @param {string} type 
+         */
+        function showNotification(message, type) {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+            // 実際にはUI要素（トーストなど）で表示するのが望ましい
+        }
+
+
+        // =========================================================================================
+        // 6. イベントリスナーとメインロジック
+        // =========================================================================================
+
+        /**
+         * メッセージ送信処理
+         */
+        async function handleSendMessage() {
+            const messageText = elements.messageInput.value.trim();
+            const speaker = document.querySelector('input[name="speaker"]:checked').value;
+
+            if (messageText === "") return;
+
+            // 1. ユーザーメッセージをFirestoreに保存
+            // セキュリティルールが有効なパスワードをチェックするため、無効ならここでエラーになる
+            await saveMessage(speaker, messageText);
+            
+            // 2. 入力フィールドをクリア
+            elements.messageInput.value = '';
+            
+            // 3. Geminiの応答を待機
+            showLoading(true, "Geminiが考えています...");
+            const aiResponse = await getGeminiResponse(messageText, speaker);
+            showLoading(false);
+
+            // 4. Geminiの応答をFirestoreに保存
+            if (aiResponse) {
+                await saveMessage("Gemini", aiResponse, true);
+            }
+        }
+
+        /**
+         * 7. エクスポート機能の実行
+         */
+        function handleExport() {
+            const messages = Array.from(elements.messagesList.children);
+            if (messages.length === 0) {
+                showNotification("エクスポートするメッセージがありません。", "info");
+                return;
+            }
+
+            let exportText = `--- Geminiチャット履歴 (ルームID: ${currentRoomId}) ---\n\n`;
+
+            messages.forEach(msgDiv => {
+                const speaker = msgDiv.dataset.speaker;
+                const text = msgDiv.querySelector('p').textContent;
+                const timestamp = msgDiv.querySelector('.text-xs').textContent;
+
+                exportText += `[${timestamp}] <${speaker}>: ${text}\n`;
+            });
+            
+            exportText += `\n--- ユーザーID: ${userId} ---`;
+
+            // ファイルとしてダウンロード
+            const blob = new Blob([exportText], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chat_export_${currentRoomId}_${new Date().toISOString().slice(0, 10)}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+
+            showNotification("チャット履歴をエクスポートしました。", "success");
+        }
+        
+        /**
+         * ルームアクセス処理
+         */
+        async function handleAccessRoom() {
+            if (!isAuthReady) {
+                elements.passwordError.textContent = "認証処理がまだ完了していません。しばらくお待ちください。";
+                elements.passwordError.classList.remove('hidden');
+                return;
+            }
+            
+            const password = elements.roomPasswordInput.value.trim();
+            if (password.length < 4) {
+                elements.passwordError.textContent = "パスワードは4文字以上で入力してください。";
+                elements.passwordError.classList.remove('hidden');
+                return;
+            }
+            
+            currentRoomId = password; 
+            
+            // UIをチャット画面に切り替え
+            elements.passwordScreen.classList.add('hidden');
+            elements.chatScreen.classList.remove('hidden');
+            elements.currentRoomIdDisplay.textContent = currentRoomId;
+
+            // Firestoreの購読を開始
+            // ここで onSnapshot が実行され、セキュリティルール isValidRoomId() がパスワードをチェックします。
+            // パスワードが無効な場合、onSnapshot のエラーコールバックで handlePermissionDenied() が呼ばれ、
+            // 自動的にパスワード入力画面に戻ります。
+            subscribeToMessages(currentRoomId);
+        }
+
+        // 2. パスワード入力とアクセス制御
+        elements.accessButton.addEventListener('click', handleAccessRoom);
+
+        // 6. リセットボタンのイベントリスナー
+        elements.resetButton.addEventListener('click', async () => {
+            const confirmed = await showModal(
+                "履歴の完全リセット",
+                "この操作は元に戻せません。このルームの全てのチャット履歴を完全に削除してもよろしいですか？",
+                "はい、削除します"
+            );
+
+            if (confirmed) {
+                resetChatHistory();
+            }
+        });
+
+        // 7. エクスポートボタンのイベントリスナー
+        elements.exportButton.addEventListener('click', handleExport);
+
+        // 送信ボタンとEnterキーイベント
+        elements.sendButton.addEventListener('click', handleSendMessage);
+        elements.messageInput.addEventListener('keydown', (e) => {
+            // Shift + Enterで改行、Enterのみで送信
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                elements.sendButton.click();
+            }
+        });
+
+        // 入力チェック（空欄でない限り送信ボタンを有効化）
+        elements.messageInput.addEventListener('input', () => {
+            elements.sendButton.disabled = elements.messageInput.value.trim() === '';
+        });
+
+        // 初期化処理を開始
+        if (firebaseConfig) {
+            elements.accessButton.disabled = true; // 認証完了まで無効化
+            initializeFirebase();
+        } else {
+            console.error("Firebaseの設定が利用できません。Canvas環境外で実行していますか？");
+            // Firebaseなしでもチャットはできるようにするが、永続化とAI応答はAPIキーに依存
+            elements.sendButton.disabled = false;
+        }
+
+    </script>
+</body>
+</html>
